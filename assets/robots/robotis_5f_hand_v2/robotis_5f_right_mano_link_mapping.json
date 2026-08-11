@@ -1,0 +1,193 @@
+{
+  "mano_link_assignments": [
+    {
+      "mano_point_index": 0,
+      "link_name": "palm",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        -0.006000000052154064
+      ]
+    },
+    {
+      "mano_point_index": 1,
+      "link_name": "finger_r_link_1_thumb1",
+      "offset_xyz": [
+        0.0430000014603138,
+        -0.017000000923871994,
+        -0.004000000189989805
+      ]
+    },
+    {
+      "mano_point_index": 2,
+      "link_name": "finger_r_link_1_thumb2",
+      "offset_xyz": [
+        0.0,
+        0.02800000086426735,
+        0.009999999776482582
+      ]
+    },
+    {
+      "mano_point_index": 3,
+      "link_name": "finger_r_link_1_thumb3",
+      "offset_xyz": [
+        -0.006000000052154064,
+        0.04100000113248825,
+        0.014000000432133675
+      ]
+    },
+    {
+      "mano_point_index": 4,
+      "link_name": "finger_r_link_1_thumb4",
+      "offset_xyz": [
+        0.0,
+        0.050999999046325684,
+        0.01600000075995922
+      ]
+    },
+    {
+      "mano_point_index": 5,
+      "link_name": "finger_r_link_2_index1",
+      "offset_xyz": [
+        0.01600000075995922,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "mano_point_index": 6,
+      "link_name": "finger_r_link_2_index2",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000014901161
+      ]
+    },
+    {
+      "mano_point_index": 7,
+      "link_name": "finger_r_link_2_index3",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000014901161
+      ]
+    },
+    {
+      "mano_point_index": 8,
+      "link_name": "finger_r_link_2_index4",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000014901161
+      ]
+    },
+    {
+      "mano_point_index": 9,
+      "link_name": "finger_r_link_3_middle1",
+      "offset_xyz": [
+        0.01600000075995922,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "mano_point_index": 10,
+      "link_name": "finger_r_link_3_middle2",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000014901161
+      ]
+    },
+    {
+      "mano_point_index": 11,
+      "link_name": "finger_r_link_3_middle3",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000014901161
+      ]
+    },
+    {
+      "mano_point_index": 12,
+      "link_name": "finger_r_link_3_middle4",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000014901161
+      ]
+    },
+    {
+      "mano_point_index": 13,
+      "link_name": "finger_r_link_4_ring1",
+      "offset_xyz": [
+        0.01600000075995922,
+        -0.007654320914298296,
+        0.0
+      ]
+    },
+    {
+      "mano_point_index": 14,
+      "link_name": "finger_r_link_4_ring2",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000014901161
+      ]
+    },
+    {
+      "mano_point_index": 15,
+      "link_name": "finger_r_link_4_ring3",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000014901161
+      ]
+    },
+    {
+      "mano_point_index": 16,
+      "link_name": "finger_r_link_4_ring4",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000387430191
+      ]
+    },
+    {
+      "mano_point_index": 17,
+      "link_name": "finger_r_link_5_little1",
+      "offset_xyz": [
+        0.01600000075995922,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "mano_point_index": 18,
+      "link_name": "finger_r_link_5_little2",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000014901161
+      ]
+    },
+    {
+      "mano_point_index": 19,
+      "link_name": "finger_r_link_5_little3",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000014901161
+      ]
+    },
+    {
+      "mano_point_index": 20,
+      "link_name": "finger_r_link_5_little4",
+      "offset_xyz": [
+        0.0,
+        0.0,
+        0.03500000014901161
+      ]
+    }
+  ]
+}

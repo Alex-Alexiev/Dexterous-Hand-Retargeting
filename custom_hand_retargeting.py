@@ -47,6 +47,7 @@ def _load_custom_config_options(config_path: Optional[str]) -> Dict[str, Any]:
         "add_dummy_free_joints": False,
         "mapping_load_path": None,
         "mapping_output_path": None,
+        "default_reference_pose_path": None,
     }
     if config_path is None:
         return result
@@ -91,10 +92,18 @@ def _load_custom_config_options(config_path: Optional[str]) -> Dict[str, Any]:
     if mapping_output is None:
         mapping_output = mapping_load
 
+    # Per-hand default/reference pose JSON (save target for the tuner; may not exist yet).
+    reference_pose_path = _resolve_optional_path(
+        custom_cfg.get("default_reference_pose_path"),
+        base_dir=path.parent,
+        repo_root=repo_root,
+    )
+
     result["urdf_path"] = urdf_path
     result["add_dummy_free_joints"] = bool(add_dummy_free_joints)
     result["mapping_load_path"] = mapping_load
     result["mapping_output_path"] = mapping_output
+    result["default_reference_pose_path"] = reference_pose_path
     return result
 
 
@@ -156,6 +165,7 @@ class CustomHandRetargetingApp:
             mapping_output_path=mapping_output_path,
             robot_name_for_default=robot.name,
             hand_type_for_default=hand_type,
+            reference_pose_path=custom_cfg["default_reference_pose_path"],
         )
         self.viewer.set_debug_update_callback(lambda: self._refresh(force=True))
         self.mapping_load_path = mapping_load_path
@@ -296,20 +306,30 @@ class CustomHandRetargetingApp:
         debug_link_index, debug_target_rotation_local = (
             self.viewer.get_single_frame_orientation_target()
         )
-        mapping_link_indices, mapping_offsets = self.viewer.get_current_mapping_for_optimizer()
-        robot_qpos = retarget_hand_to_robot_joints(
-            hand_keypoints=hand_keypoints,
-            hand_joint_values=hand_joint_values,
-            robot_joint_names=self.robot_joint_names,
-            robot_model=self.optimizer_robot_model,
-            mapping_path=self.mapping_load_path,
-            mapping_link_indices=mapping_link_indices,
-            mapping_offsets=mapping_offsets,
-            hand_to_robot_translation=hand_to_robot_translation,
-            hand_to_robot_rotation=hand_to_robot_rotation,
-            debug_link_index=debug_link_index,
-            debug_target_rotation_local=debug_target_rotation_local,
-        )
+        reference_pose, reg_weight = self.viewer.get_reference_pose_and_weight()
+        if self.viewer.is_retarget_enabled():
+            mapping_link_indices, mapping_offsets = (
+                self.viewer.get_current_mapping_for_optimizer()
+            )
+            robot_qpos = retarget_hand_to_robot_joints(
+                hand_keypoints=hand_keypoints,
+                hand_joint_values=hand_joint_values,
+                robot_joint_names=self.robot_joint_names,
+                robot_model=self.optimizer_robot_model,
+                mapping_path=self.mapping_load_path,
+                mapping_link_indices=mapping_link_indices,
+                mapping_offsets=mapping_offsets,
+                hand_to_robot_translation=hand_to_robot_translation,
+                hand_to_robot_rotation=hand_to_robot_rotation,
+                debug_link_index=debug_link_index,
+                debug_target_rotation_local=debug_target_rotation_local,
+                reference_pose=reference_pose,
+                reg_weight=reg_weight,
+            )
+        else:
+            # Default-pose mode: park the green hand at the reference pose and skip the
+            # (expensive) retarget solve entirely, so aligning link frames stays responsive.
+            robot_qpos = np.asarray(reference_pose, dtype=np.float32)
 
         self.viewer.update_frame(
             hand_vertices=vertices,

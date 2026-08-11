@@ -85,6 +85,7 @@ class CustomRetargetingViserViewer:
         mapping_output_path: Optional[str] = None,
         robot_name_for_default: str = "robot",
         hand_type_for_default: str = "right",
+        reference_pose_path: Optional[str] = None,
     ):
         try:
             import viser
@@ -128,6 +129,43 @@ class CustomRetargetingViserViewer:
             mesh_color_override=(0.55, 0.90, 0.55, 0.45),
         )
 
+        # --- Second robot rendering the default/reference pose used by the optimizer's
+        #     regularization term (amber), so you can see what the retarget is pulled toward.
+        self._input_joint_names = list(input_joint_names)
+        from retargeting.custom_hand_retargeting_fn import (
+            get_default_reference_pose,
+            load_reference_pose,
+        )
+
+        n_ref = len(self._input_joint_names)
+        self.reference_pose_path = str(reference_pose_path) if reference_pose_path else None
+        # Load a previously-saved pose from JSON (per-hand), else fall back to the hardcoded default.
+        loaded_pose, loaded_w = load_reference_pose(self.reference_pose_path, expected_dim=n_ref)
+        self.reference_pose = np.asarray(loaded_pose, dtype=np.float64)  # indexed like input_joint_names
+        # "reset" restores the hardcoded default (fitted to this robot's DoF), not the saved file.
+        base = np.zeros((n_ref,), dtype=np.float64)
+        dflt = get_default_reference_pose()
+        m = min(n_ref, dflt.shape[0])
+        base[:m] = dflt[:m]
+        self._default_reference_pose = base
+        self.reg_weight = 1e-3 if loaded_w is None else float(loaded_w)
+        self._ref_syncing = False
+        # When False, the green (/robot) hand parks at the default pose and the retarget solve is
+        # skipped (fast frame-alignment); when True it shows the live retargeted result.
+        self.retarget_enabled = True
+
+        self.default_robot_frame = self.server.scene.add_frame("/default_robot", show_axes=False)
+        self.default_robot_frame.position = np.array(
+            [2.0 * self.robot_x_offset, 0.0, 0.0], dtype=np.float32
+        )
+        self.default_robot_viewer = ViserHandViewer(
+            urdf_path=urdf_path,
+            input_joint_names=input_joint_names,
+            server=self.server,
+            root_node_name="/default_robot",
+            mesh_color_override=(0.95, 0.72, 0.25, 0.55),
+        )
+
         default_mapping_path = (
             Path(__file__).resolve().parent
             / "saved_alignments"
@@ -155,9 +193,11 @@ class CustomRetargetingViserViewer:
         self._setup_mapping_gui()
         self._setup_hand_to_robot_alignment_gui()
         self._setup_single_frame_debug_gui()
+        self._setup_reference_pose_gui()
         self._sync_mapping_gui_from_selection()
         self.robot_model.compute_forward_kinematics(self.last_robot_qpos)
-        self._refresh_mapping_visualization(recompute_fk=False)
+        self._refresh_mapping_visualization()
+        self._render_default_pose_robot()
 
         self.server.scene.world_axes.visible = True
         self.server.scene.world_axes.axes_length = 0.10
@@ -297,28 +337,28 @@ class CustomRetargetingViserViewer:
                 int(self.debug_link_slider.value)
             ]
             self._sync_debug_target_to_selected_link()
-            self._refresh_mapping_visualization(recompute_fk=False)
+            self._refresh_mapping_visualization()
             self._notify_debug_update()
 
         @self.debug_rx_slider.on_update
         def _(_event):
             if self._debug_syncing_gui:
                 return
-            self._refresh_mapping_visualization(recompute_fk=False)
+            self._refresh_mapping_visualization()
             self._notify_debug_update()
 
         @self.debug_ry_slider.on_update
         def _(_event):
             if self._debug_syncing_gui:
                 return
-            self._refresh_mapping_visualization(recompute_fk=False)
+            self._refresh_mapping_visualization()
             self._notify_debug_update()
 
         @self.debug_rz_slider.on_update
         def _(_event):
             if self._debug_syncing_gui:
                 return
-            self._refresh_mapping_visualization(recompute_fk=False)
+            self._refresh_mapping_visualization()
             self._notify_debug_update()
 
     def _sync_debug_target_to_selected_link(self) -> None:
@@ -340,6 +380,127 @@ class CustomRetargetingViserViewer:
         if self._debug_update_callback is None:
             return
         self._debug_update_callback()
+
+    def _setup_reference_pose_gui(self) -> None:
+        """GUI to tune the optimizer's default/reference pose (amber robot) + its weight.
+
+        The reference pose is the target the regularization term pulls the retarget toward;
+        ``reg weight`` trades off orientation-matching vs. staying near this pose. The two joint
+        sliders edit one joint of the reference at a time (pick the id, then set its value).
+        """
+        n = len(self.reference_pose)
+        self.retarget_toggle = self.server.gui.add_checkbox(
+            "Green hand: run retarget (off = show default pose)",
+            initial_value=self.retarget_enabled,
+        )
+
+        @self.retarget_toggle.on_update
+        def _(_) -> None:
+            self.retarget_enabled = bool(self.retarget_toggle.value)
+            self._notify_debug_update()
+
+        with self.server.gui.add_folder("Default pose (optimizer reg)"):
+            self.reg_weight_slider = self.server.gui.add_slider(
+                "reg_weight",
+                min=0.0,
+                max=0.05,
+                step=0.0005,
+                initial_value=float(np.clip(self.reg_weight, 0.0, 0.05)),
+            )
+            self.ref_joint_id_slider = self.server.gui.add_slider(
+                "default_pose_joint_id",
+                min=0,
+                max=max(n - 1, 0),
+                step=1,
+                initial_value=0,
+            )
+            self.ref_joint_name_text = self.server.gui.add_text(
+                "default_pose_joint_name",
+                initial_value=self._input_joint_names[0] if n else "-",
+                disabled=True,
+            )
+            self.ref_joint_val_slider = self.server.gui.add_slider(
+                "default_pose_joint_value",
+                min=-3.2,
+                max=3.2,
+                step=0.01,
+                initial_value=float(self.reference_pose[0]) if n else 0.0,
+            )
+            self.ref_reset_button = self.server.gui.add_button("reset_default_pose")
+            self.ref_save_button = self.server.gui.add_button("save_default_pose_to_json")
+            self.ref_save_status = self.server.gui.add_text(
+                "save_status",
+                initial_value=(
+                    f"target: {self.reference_pose_path}"
+                    if self.reference_pose_path
+                    else "no default_reference_pose_path in config"
+                ),
+                disabled=True,
+            )
+
+        @self.reg_weight_slider.on_update
+        def _(_) -> None:
+            self.reg_weight = float(self.reg_weight_slider.value)
+            self._notify_debug_update()
+
+        @self.ref_joint_id_slider.on_update
+        def _(_) -> None:
+            jid = int(self.ref_joint_id_slider.value)
+            self._ref_syncing = True
+            self.ref_joint_val_slider.value = float(self.reference_pose[jid])
+            self.ref_joint_name_text.value = self._input_joint_names[jid]
+            self._ref_syncing = False
+
+        @self.ref_joint_val_slider.on_update
+        def _(_) -> None:
+            if self._ref_syncing:
+                return
+            jid = int(self.ref_joint_id_slider.value)
+            self.reference_pose[jid] = float(self.ref_joint_val_slider.value)
+            self._render_default_pose_robot()
+            self._notify_debug_update()
+
+        @self.ref_reset_button.on_click
+        def _(_) -> None:
+            self.reference_pose = self._default_reference_pose.copy()
+            self.reg_weight = 1e-3
+            self._ref_syncing = True
+            jid = int(self.ref_joint_id_slider.value)
+            self.ref_joint_val_slider.value = float(self.reference_pose[jid])
+            self.reg_weight_slider.value = self.reg_weight
+            self._ref_syncing = False
+            self._render_default_pose_robot()
+            self._notify_debug_update()
+
+        @self.ref_save_button.on_click
+        def _(_) -> None:
+            if not self.reference_pose_path:
+                self.ref_save_status.value = "no default_reference_pose_path in config"
+                return
+            from retargeting.custom_hand_retargeting_fn import save_reference_pose
+
+            try:
+                out = save_reference_pose(
+                    self.reference_pose_path,
+                    self.reference_pose,
+                    self.reg_weight,
+                    joint_names=self._input_joint_names,
+                )
+                self.ref_save_status.value = f"saved -> {out}"
+            except Exception as exc:  # surface the failure in the GUI instead of the console
+                self.ref_save_status.value = f"save FAILED: {exc}"
+
+    def _render_default_pose_robot(self) -> None:
+        """Render the amber 'default pose' robot at the current reference pose."""
+        self.default_robot_viewer.set_qpos(np.asarray(self.reference_pose, dtype=np.float32))
+
+    def get_reference_pose_and_weight(self) -> Tuple[np.ndarray, float]:
+        """Current optimizer reference pose (indexed like input_joint_names) + reg weight."""
+        return np.asarray(self.reference_pose, dtype=np.float64).copy(), float(self.reg_weight)
+
+    def is_retarget_enabled(self) -> bool:
+        """True -> green hand shows the live retarget; False -> parks at the default pose."""
+        return bool(self.retarget_enabled)
 
     def get_single_frame_orientation_target(self) -> Tuple[int, np.ndarray]:
         link_sel_idx = int(self.debug_link_slider.value)
@@ -408,7 +569,7 @@ class CustomRetargetingViserViewer:
         if self.last_hand_joints is None:
             return
         self._apply_hand_to_robot_root_pose(self.last_hand_joints)
-        self._refresh_mapping_visualization(recompute_fk=False)
+        self._refresh_mapping_visualization()
 
     def _robot_local_to_world(self, points_local: np.ndarray) -> np.ndarray:
         rot = rotations.matrix_from_quaternion(
@@ -599,23 +760,32 @@ class CustomRetargetingViserViewer:
         self._reset_mapping_to_default()
         self._load_mapping_if_exists()
         self._sync_mapping_gui_from_selection()
-        self._refresh_mapping_visualization(recompute_fk=True)
+        self._refresh_mapping_visualization()
         self._notify_debug_update()
 
-    def _print_and_save_mapping(self) -> None:
+    def _save_mapping(self) -> None:
+        """Write the current MANO->link mapping to the JSON the tuner + dataset gen both load.
+
+        Saves to ``mapping_load_path`` (not the separate output path, which resolves incorrectly
+        when it doesn't exist yet and is read by nothing), so tuning persists across restarts and
+        flows straight into dataset generation. Status is surfaced in the GUI, not the console.
+        """
         payload = self._mapping_payload()
         payload_text = json.dumps(payload, indent=2)
-        print("\n=== MANO LINK MAPPING START ===")
-        print(payload_text)
-        print("=== MANO LINK MAPPING END ===\n")
-        self.mapping_output_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.mapping_output_path.open("w") as f:
-            f.write(payload_text + "\n")
-        print(f"Saved mapping to {self.mapping_output_path}")
+        try:
+            self.mapping_load_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.mapping_load_path.open("w") as f:
+                f.write(payload_text + "\n")
+            self.mapping_save_status.value = f"saved -> {self.mapping_load_path}"
+        except Exception as exc:  # surface failures in the GUI instead of the console
+            self.mapping_save_status.value = f"save FAILED: {exc}"
 
-    def _refresh_mapping_visualization(self, recompute_fk: bool = True) -> None:
-        if recompute_fk:
-            self.robot_model.compute_forward_kinematics(self.last_robot_qpos)
+    def _refresh_mapping_visualization(self) -> None:
+        # FK is re-run unconditionally so that everything drawn below is derived from the qpos
+        # currently on screen. The old opt-out let callers reuse whatever pose happened to be
+        # left in the Pinocchio data, which is what made the mapping skeleton and the link
+        # frames trail the rendered robot by a frame.
+        self.robot_model.compute_forward_kinematics(self.last_robot_qpos)
 
         mapping_points = self._compute_mapping_points()
         mapping_segments = segments_from_edges(mapping_points, _HAND_SKELETON_EDGES)
@@ -711,15 +881,20 @@ class CustomRetargetingViserViewer:
                 initial_value=self.assignable_link_names[self._find_palm_link_idx()],
                 disabled=True,
             )
-            self.mapping_print_button = self.server.gui.add_button("print_mapping")
+            self.mapping_save_button = self.server.gui.add_button("save_mapping_to_json")
             self.mapping_reload_button = self.server.gui.add_button("reload_mapping_from_file")
+            self.mapping_save_status = self.server.gui.add_text(
+                "mapping_save_status",
+                initial_value=f"target: {self.mapping_load_path}",
+                disabled=True,
+            )
 
         @self.mapping_point_slider.on_update
         def _(_event):
             if self._mapping_syncing_gui:
                 return
             self._sync_mapping_gui_from_selection()
-            self._refresh_mapping_visualization(recompute_fk=True)
+            self._refresh_mapping_visualization()
             self._notify_debug_update()
 
         @self.mapping_link_slider.on_update
@@ -727,7 +902,7 @@ class CustomRetargetingViserViewer:
             if self._mapping_syncing_gui:
                 return
             self._apply_mapping_gui_to_selection()
-            self._refresh_mapping_visualization(recompute_fk=True)
+            self._refresh_mapping_visualization()
             self._notify_debug_update()
 
         @self.mapping_offset_x_slider.on_update
@@ -735,7 +910,7 @@ class CustomRetargetingViserViewer:
             if self._mapping_syncing_gui:
                 return
             self._apply_mapping_gui_to_selection()
-            self._refresh_mapping_visualization(recompute_fk=True)
+            self._refresh_mapping_visualization()
             self._notify_debug_update()
 
         @self.mapping_offset_y_slider.on_update
@@ -743,7 +918,7 @@ class CustomRetargetingViserViewer:
             if self._mapping_syncing_gui:
                 return
             self._apply_mapping_gui_to_selection()
-            self._refresh_mapping_visualization(recompute_fk=True)
+            self._refresh_mapping_visualization()
             self._notify_debug_update()
 
         @self.mapping_offset_z_slider.on_update
@@ -751,12 +926,12 @@ class CustomRetargetingViserViewer:
             if self._mapping_syncing_gui:
                 return
             self._apply_mapping_gui_to_selection()
-            self._refresh_mapping_visualization(recompute_fk=True)
+            self._refresh_mapping_visualization()
             self._notify_debug_update()
 
-        @self.mapping_print_button.on_click
+        @self.mapping_save_button.on_click
         def _(_event):
-            self._print_and_save_mapping()
+            self._save_mapping()
 
         @self.mapping_reload_button.on_click
         def _(_event):
@@ -824,6 +999,10 @@ class CustomRetargetingViserViewer:
         hand_vertices = hand_vertices.astype(np.float32)
         hand_joints = hand_joints.astype(np.float32)
         self.last_hand_joints = hand_joints.copy()
+        # Adopt this frame's qpos up front. Root alignment and the mapping/link-frame refresh
+        # below both run FK off last_robot_qpos, so setting it after them aligned the robot and
+        # drew its link frames using the previous frame's pose.
+        self.last_robot_qpos = np.asarray(robot_qpos, dtype=np.float32).copy()
 
         if self.hand_mesh is None:
             self.hand_mesh = self.server.scene.add_mesh_simple(
@@ -859,8 +1038,6 @@ class CustomRetargetingViserViewer:
 
         self._update_objects(object_pose_frame.astype(np.float32))
 
-        robot_qpos = np.asarray(robot_qpos, dtype=np.float32)
-        self.last_robot_qpos = robot_qpos.copy()
-        self.robot_viewer.set_qpos(robot_qpos)
+        self.robot_viewer.set_qpos(self.last_robot_qpos)
 
-        self._refresh_mapping_visualization(recompute_fk=False)
+        self._refresh_mapping_visualization()

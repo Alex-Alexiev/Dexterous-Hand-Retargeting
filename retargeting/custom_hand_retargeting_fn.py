@@ -47,6 +47,70 @@ _DEFAULT_REFERENCE_POSE = np.asarray(
 )
 
 
+def get_default_reference_pose() -> np.ndarray:
+    """Hardcoded fallback reference pose (indexed like the non-locked robot joints)."""
+    return _DEFAULT_REFERENCE_POSE.copy()
+
+
+def load_reference_pose(
+    path: Optional[str], expected_dim: Optional[int] = None
+) -> Tuple[np.ndarray, Optional[float]]:
+    """Load the optimizer's default/reference pose (+ optional reg weight) from a JSON file.
+
+    Falls back to ``_DEFAULT_REFERENCE_POSE`` (reg_weight None) when ``path`` is None, missing,
+    or unreadable. When ``expected_dim`` is given, the pose is padded/truncated to that length so
+    it always matches the robot's DoF ordering.
+    """
+    pose = _DEFAULT_REFERENCE_POSE.copy()
+    reg_weight: Optional[float] = None
+    if path is not None:
+        p = Path(path).expanduser()
+        if p.is_file():
+            try:
+                with p.open("r") as f:
+                    payload = json.load(f)
+                raw = payload.get("reference_pose")
+                if raw is not None:
+                    pose = np.asarray(raw, dtype=np.float64).reshape(-1)
+                if payload.get("reg_weight") is not None:
+                    reg_weight = float(payload["reg_weight"])
+            except Exception:
+                pose = _DEFAULT_REFERENCE_POSE.copy()
+                reg_weight = None
+    if expected_dim is not None and pose.shape[0] != expected_dim:
+        fitted = np.zeros((int(expected_dim),), dtype=np.float64)
+        m = min(int(expected_dim), pose.shape[0])
+        fitted[:m] = pose[:m]
+        pose = fitted
+    return pose, reg_weight
+
+
+def save_reference_pose(
+    path: str,
+    pose: np.ndarray,
+    reg_weight: Optional[float] = None,
+    joint_names: Optional[Sequence[str]] = None,
+) -> str:
+    """Write the default/reference pose (+ reg weight, joint names) to ``path`` as JSON.
+
+    Returns the resolved absolute path written.
+    """
+    p = Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "reference_pose": [
+            float(v) for v in np.asarray(pose, dtype=np.float64).reshape(-1)
+        ],
+    }
+    if reg_weight is not None:
+        payload["reg_weight"] = float(reg_weight)
+    if joint_names is not None:
+        payload["joint_names"] = [str(n) for n in joint_names]
+    with p.open("w") as f:
+        json.dump(payload, f, indent=2)
+    return str(p.resolve())
+
+
 def _normalize(vec: np.ndarray) -> np.ndarray:
     vec64 = np.asarray(vec, dtype=np.float64)
     norm = float(np.linalg.norm(vec64))
@@ -117,20 +181,29 @@ def _extract_dummy_joint_indices(robot_joint_names: Sequence[str]) -> Dict[str, 
 
 
 def _build_reference_q(
-    robot_joint_names: Sequence[str], locked_dummy_indices: np.ndarray
+    robot_joint_names: Sequence[str], locked_dummy_indices: np.ndarray,
+    reference_pose: Optional[np.ndarray] = None,
 ) -> np.ndarray:
-    """Build full-q reference using the user-provided 20-DoF target pose."""
+    """Build full-q reference using the (optionally overridden) N-DoF target pose.
+
+    ``reference_pose`` is indexed in the same non-locked joint order as
+    ``_DEFAULT_REFERENCE_POSE``; when None the module default is used.
+    """
     dof = len(robot_joint_names)
     q_ref = np.zeros((dof,), dtype=np.float64)
     locked = set(int(i) for i in locked_dummy_indices.tolist())
+    src = (
+        _DEFAULT_REFERENCE_POSE if reference_pose is None
+        else np.asarray(reference_pose, dtype=np.float64).reshape(-1)
+    )
 
     src_idx = 0
     for dst_idx in range(dof):
         if dst_idx in locked:
             q_ref[dst_idx] = 0.0
             continue
-        if src_idx < _DEFAULT_REFERENCE_POSE.shape[0]:
-            q_ref[dst_idx] = _DEFAULT_REFERENCE_POSE[src_idx]
+        if src_idx < src.shape[0]:
+            q_ref[dst_idx] = src[src_idx]
             src_idx += 1
         else:
             q_ref[dst_idx] = 0.0
@@ -409,6 +482,8 @@ def retarget_hand_to_robot_joints(
     hand_to_robot_rotation: Optional[np.ndarray] = None,
     debug_link_index: Optional[int] = None,
     debug_target_rotation_local: Optional[np.ndarray] = None,
+    reference_pose: Optional[np.ndarray] = None,
+    reg_weight: Optional[float] = None,
 ) -> np.ndarray:
     """Retarget robot joints from MANO orientation targets.
 
@@ -474,7 +549,9 @@ def retarget_hand_to_robot_joints(
         )
         dummy_idx_map = _extract_dummy_joint_indices(robot_joint_names)
         locked_dummy_indices = np.asarray(sorted(dummy_idx_map.values()), dtype=np.int32)
-        q_ref_full = _build_reference_q(robot_joint_names, locked_dummy_indices)
+        q_ref_full = _build_reference_q(
+            robot_joint_names, locked_dummy_indices, reference_pose
+        )
         q_init = q_ref_full.copy()
 
         mapped_frame_indices = link_indices_by_mano[mapped_valid].astype(np.int32)
@@ -488,8 +565,8 @@ def retarget_hand_to_robot_joints(
             _LAST_QPOS_CACHE[cache_key] = q_init.copy()
             return q_init.astype(np.float32)
 
-        reg_weight = 1e-3
-        sqrt_reg_weight = float(np.sqrt(reg_weight))
+        reg_weight_val = 1e-3 if reg_weight is None else float(reg_weight)
+        sqrt_reg_weight = float(np.sqrt(max(reg_weight_val, 0.0)))
         q_active_init = q_init[active_indices].copy()
         q_ref_active = q_ref_full[active_indices].copy()
 
@@ -500,6 +577,12 @@ def retarget_hand_to_robot_joints(
         if np.any(bad_bounds):
             lbx[bad_bounds] = -np.inf
             ubx[bad_bounds] = np.inf
+
+        # Keep the warm-start strictly inside the bounds. A reference/default pose value can sit
+        # exactly on a joint limit (or, after a float32 round-trip, a hair past it), which makes
+        # least_squares reject x0 with "Initial guess is outside of provided bounds" -> the solve
+        # is skipped in the except below and EVERY frame collapses onto the reference pose.
+        q_active_init = np.clip(q_active_init, lbx, ubx)
 
         with _OPTIMIZE_LOCK:
             try:
@@ -530,7 +613,10 @@ def retarget_hand_to_robot_joints(
                 )
                 if locked_dummy_indices.size > 0:
                     q_opt[locked_dummy_indices] = q_init[locked_dummy_indices]
-            except Exception:
+            except Exception as _exc:
+                import os as _os
+                if _os.environ.get("RETARGET_DEBUG"):
+                    print(f"[RT] least_squares EXC: {type(_exc).__name__}: {_exc}", flush=True)
                 q_opt = q_init.copy()
 
         _LAST_QPOS_CACHE[cache_key] = q_opt.copy()

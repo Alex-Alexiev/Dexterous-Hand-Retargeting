@@ -1,0 +1,10 @@
+custom_hand_retargeting:
+  mapping_path: assets/robots/robotis_5f_hand_v2/robotis_5f_right_mano_link_mapping.json
+  mapping_output_path: assets/robots/robotis_5f_hand_v2/robotis_5f_right_mano_link_mapping_output.json
+  # Per-hand default/reference pose the optimizer regularizes toward. The tuner's
+  # "save_default_pose_to_json" button writes here, and dataset generation reads it back.
+  default_reference_pose_path: assets/robots/robotis_5f_hand_v2/default_reference_pose.json
+  retargeting:
+    type: joint
+    urdf_path: assets/robots/robotis_5f_hand_v2/robotis_5f_hand_v2.urdf
+

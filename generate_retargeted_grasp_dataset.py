@@ -16,7 +16,9 @@ from utils.dataset.retargeted_grasp_dataset import (
 def main(config: str) -> None:
     repo_root = Path(__file__).resolve().parent
     config = load_generation_config(config, repo_root)
-    dexycb_dir, output_dir, urdf_path, mapping_path = resolve_generation_paths(config, repo_root)
+    dexycb_dir, output_dir, urdf_path, mapping_path, reference_pose_path = (
+        resolve_generation_paths(config, repo_root)
+    )
 
     if not dexycb_dir.is_dir():
         raise ValueError(f"DexYCB directory does not exist: {dexycb_dir}")
@@ -30,7 +32,7 @@ def main(config: str) -> None:
         raise ValueError("DexYCBVideoDataset is empty with the current config.")
 
     selected_indices = select_trajectory_indices(len(dataset), config)
-    resources = build_retargeting_resources(urdf_path, mapping_path)
+    resources = build_retargeting_resources(urdf_path, mapping_path, reference_pose_path)
 
     all_datapoints = []
     skipped_trajectories = []

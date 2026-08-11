@@ -8,7 +8,10 @@ import yaml
 from scipy.spatial.transform import Rotation
 
 from dex_retargeting.robot_wrapper import RobotWrapper
-from retargeting.custom_hand_retargeting_fn import retarget_hand_to_robot_joints
+from retargeting.custom_hand_retargeting_fn import (
+    load_reference_pose,
+    retarget_hand_to_robot_joints,
+)
 from utils.dataset.dataset import YCB_CLASSES
 from utils.dataset.grasp_phase_utils import compute_grasp_phase_and_object_selection
 from utils.manopth.geometry import compute_hand_geometry, compute_joint_trajectory_with_frames
@@ -56,6 +59,7 @@ class RetargetingResources:
     mapping_robot_model: RobotWrapper
     link_indices_by_mano: np.ndarray
     offsets_by_mano: np.ndarray
+    reference_pose: Optional[np.ndarray] = None
 
 
 _PHASE_TO_INDEX = {
@@ -110,16 +114,16 @@ def _load_retarget_config_paths(
     retarget_config_path: str,
     *,
     repo_root: Path,
-) -> Tuple[Optional[Path], Optional[Path]]:
+) -> Tuple[Optional[Path], Optional[Path], Optional[Path]]:
     config_file = resolve_repo_path(retarget_config_path, repo_root).expanduser().resolve()
     with config_file.open("r") as f:
         payload = yaml.load(f, Loader=yaml.FullLoader)
     if not isinstance(payload, dict):
-        return None, None
+        return None, None, None
 
     custom_cfg = payload.get("custom_hand_retargeting")
     if not isinstance(custom_cfg, dict):
-        return None, None
+        return None, None, None
 
     urdf_path = _resolve_optional_config_path(
         custom_cfg.get("urdf_path"),
@@ -140,19 +144,29 @@ def _load_retarget_config_paths(
         base_dir=config_file.parent,
         repo_root=repo_root,
     )
-    return urdf_path, mapping_path
+    reference_pose_path = _resolve_optional_config_path(
+        custom_cfg.get("default_reference_pose_path"),
+        base_dir=config_file.parent,
+        repo_root=repo_root,
+    )
+    return urdf_path, mapping_path, reference_pose_path
 
 
 def resolve_generation_paths(
     config: RetargetedGraspDatasetConfig,
     repo_root: Path,
-) -> Tuple[Path, Path, Path, Path]:
+) -> Tuple[Path, Path, Path, Path, Optional[Path]]:
     dexycb_dir = resolve_repo_path(config.dexycb_dir, repo_root)
     output_dir = resolve_repo_path(config.output_dir, repo_root)
     retarget_urdf_path = None
     retarget_mapping_path = None
+    retarget_reference_pose_path = None
     if config.retarget_config_path is not None:
-        retarget_urdf_path, retarget_mapping_path = _load_retarget_config_paths(
+        (
+            retarget_urdf_path,
+            retarget_mapping_path,
+            retarget_reference_pose_path,
+        ) = _load_retarget_config_paths(
             config.retarget_config_path,
             repo_root=repo_root,
         )
@@ -181,12 +195,18 @@ def resolve_generation_paths(
             else default_mapping_path
         )
     )
-    return dexycb_dir, output_dir, urdf_path, mapping_path
+    reference_pose_path = (
+        resolve_repo_path(config.reference_pose_path, repo_root)
+        if getattr(config, "reference_pose_path", None) is not None
+        else retarget_reference_pose_path
+    )
+    return dexycb_dir, output_dir, urdf_path, mapping_path, reference_pose_path
 
 
 def build_retargeting_resources(
     urdf_path: Path,
     mapping_path: Path,
+    reference_pose_path: Optional[Path] = None,
 ) -> RetargetingResources:
     visual_urdf_path = resolve_visual_urdf(urdf_path)
     temp_urdf_path = build_temp_urdf(visual_urdf_path, add_dummy_free_joints=False)
@@ -195,15 +215,23 @@ def build_retargeting_resources(
     link_indices_by_mano, offsets_by_mano = load_mano_link_mapping(
         mapping_path, mapping_robot_model
     )
+    robot_joint_names = tuple(optimizer_robot_model.dof_joint_names)
+    # Load the (per-hand) tuned default/reference pose; falls back to the hardcoded default when
+    # the JSON is absent, so dataset generation matches whatever the tuner last saved.
+    reference_pose, _ = load_reference_pose(
+        str(reference_pose_path) if reference_pose_path is not None else None,
+        expected_dim=len(robot_joint_names),
+    )
     return RetargetingResources(
         urdf_path=urdf_path,
         mapping_path=mapping_path,
         temp_urdf_path=temp_urdf_path,
-        robot_joint_names=tuple(optimizer_robot_model.dof_joint_names),
+        robot_joint_names=robot_joint_names,
         optimizer_robot_model=optimizer_robot_model,
         mapping_robot_model=mapping_robot_model,
         link_indices_by_mano=link_indices_by_mano.astype(np.int32),
         offsets_by_mano=offsets_by_mano.astype(np.float32),
+        reference_pose=np.asarray(reference_pose, dtype=np.float64),
     )
 
 
@@ -333,6 +361,7 @@ def build_retargeted_phase_datapoints(
             robot_model=resources.optimizer_robot_model,
             mapping_link_indices=resources.link_indices_by_mano,
             mapping_offsets=resources.offsets_by_mano,
+            reference_pose=resources.reference_pose,
         ).astype(np.float32)
         robot_root_translation, robot_root_rotation = _robot_mano_root_pose(
             hand_joints_world=hand_joints,
