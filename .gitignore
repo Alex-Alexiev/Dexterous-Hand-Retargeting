@@ -1,0 +1,63 @@
+# ---------------------------------------------------------------------------
+# Datasets and large binary assets
+# ---------------------------------------------------------------------------
+# DexYCB and any other downloaded datasets (~29 GB). Download separately.
+assets/datasets/
+
+# MANO model data. License-restricted (MPI) and >100 MB per file, so it must
+# not be redistributed here. Register at https://mano.is.tue.mpg.de and unpack
+# mano_v1_2.zip into utils/manopth/.
+utils/manopth/mano_v1_2/
+utils/manopth/mano_v1_2.zip
+
+# ---------------------------------------------------------------------------
+# Third-party source checked out separately
+# ---------------------------------------------------------------------------
+# Unmodified clone of https://github.com/Gabe-YHLee/IRVAE-public.git
+IRVAE/
+
+# ---------------------------------------------------------------------------
+# Generated outputs
+# ---------------------------------------------------------------------------
+results/
+exports/
+debug/
+wandb/
+outputs/
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.npz
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ---------------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

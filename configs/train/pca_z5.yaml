@@ -1,0 +1,27 @@
+logdir: results/retargeted_grasps/pca
+model:
+  arch: pca
+  x_dim: 20
+  z_dim: 5
+  center: true
+data:
+  training:
+    dataset: RetargetedGraspQpos
+    dataset_path: assets/datasets/retargeted_grasps_test
+    batch_size: 32
+    n_workers: 0
+    split: training
+    split_ratio: 0.9
+    shuffle: true
+    seed: 0
+  validation:
+    dataset: RetargetedGraspQpos
+    dataset_path: assets/datasets/retargeted_grasps_test
+    batch_size: 32
+    n_workers: 0
+    split: validation
+    split_ratio: 0.9
+    shuffle: false
+    seed: 0
+training:
+  seed: 0

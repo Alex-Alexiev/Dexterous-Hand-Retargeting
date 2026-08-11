@@ -1,0 +1,14 @@
+dataset_name: retargeted_grasps_test
+dexycb_dir: assets/datasets/dexycb
+output_dir: assets/datasets/retargeted_grasps_test
+retarget_config_path: configs/retargeting/robotis_5f.yaml
+hand_type: right
+trajectory_fraction: 1.0
+max_trajectories: 100000000000000000
+seed: 0
+trajectory_sample_spacing_m: 0.01
+inflection_stride: 4
+approach_offset_m: 0.05
+lift_offset_m: 0.05
+refine_window_m: 0.10
+refine_resample_spacing_m: 0.005
